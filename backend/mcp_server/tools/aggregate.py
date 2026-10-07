@@ -26,7 +26,8 @@ from mcp_server.tools._helpers import resolve_categories, num, parse_date, parse
         "also count pending rows — for 'how much did I spend this month?' "
         "prefer get_dashboard_snapshot and use aggregate for breakdowns. "
         "To filter by category, pass category_ids or category_names; "
-        "description_contains searches transaction text, not category names."
+        "description_contains searches transaction text, not category names. "
+        "Quote `grand_total` for the overall figure; `items` are the per-bucket rows."
     ),
     parameters={
         "type": "object",
@@ -106,6 +107,10 @@ async def aggregate(
     q = (
         select(bucket_id.label("bucket"), value_expr.label("value"), func.count(Transaction.id).label("count"))
         .where(Transaction.workspace_id == ws_id)
+        # Opening-balance rows are bookkeeping, not money the user moved;
+        # they are also uncategorized, so "how much is uncategorized?"
+        # summed an account's entire starting balance into the answer.
+        .where(Transaction.source != "opening_balance")
     )
 
     fd = parse_date(from_date)
@@ -177,7 +182,13 @@ async def aggregate(
         "to_date": td.isoformat() if td else None,
         "items": items,
         "total": len(items),
+        # Across every bucket, so the model never has to add buckets by
+        # hand (it reliably reports one bucket as the whole when a search
+        # splits across two payees). For avg this is the overall count only.
+        "grand_count": sum(int(i.get("count") or 0) for i in items),
     }
+    if metric in ("sum", "count"):
+        out["grand_total"] = round(sum(float(i.get("value") or 0) for i in items), 2)
     if not items and description_contains and not cats:
         # The classic miss: the model typed a category name into the text
         # filter. Say so, with the id, so the retry is a one-liner.

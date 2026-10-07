@@ -128,3 +128,21 @@ async def test_invalid_rule_condition_returns_the_vocabulary(session: AsyncSessi
     assert "merchant" not in r["allowed"]["fields"]
     assert "payee" in r["allowed"]["fields"] and "contains" in r["allowed"]["ops"]
     assert "op is one of contains" in REGISTRY["propose_create_rule"].description
+
+
+async def test_aggregate_reports_a_grand_total_and_skips_opening_balances(session: AsyncSession, ctx, test_transactions, test_account):
+    from datetime import date
+
+    from app.models.transaction import Transaction
+
+    session.add(Transaction(
+        id=uuid.uuid4(), user_id=ctx.user_id, workspace_id=test_account.workspace_id, account_id=test_account.id,
+        description="Opening balance", amount=1_000_000, date=date(2026, 1, 1), type="debit", source="opening_balance",
+        currency="BRL", status="posted",
+    ))
+    await session.commit()
+    handler = REGISTRY["aggregate"].handler
+    r = await handler(session=session, ctx=ctx, status="all", uncategorized=True)
+    assert "error" not in r
+    assert r["grand_total"] < 1_000_000
+    assert r["grand_count"] == sum(i["count"] for i in r["items"])
